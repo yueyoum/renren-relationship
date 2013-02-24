@@ -15,6 +15,7 @@ from functools import wraps
 from lxml import etree
 
 
+
 class TooLong(Exception):
     pass
 
@@ -79,7 +80,7 @@ class RenRen(object):
         tree = etree.fromstring(first_page.read(), parse)
         friends_amount = int(tree.xpath('//div[@id="toc"]/p[1]/span/text()')[0])
 
-        # print friends_amount
+        print uid, friends_amount
 
         friends_pages, _rest = divmod(friends_amount, 20)
         if _rest > 0:
@@ -96,7 +97,7 @@ class RenRen(object):
 
         @gtimeout(5)
         def _get(p):
-            # print 'get page', p
+            # print 'get page', uid, p
             html = self.opener.open(URL.format(p))
             tree = etree.fromstring(html.read(), parse)
             res = [f.split('=')[1] for f in tree.xpath(friends_xpath)]
@@ -108,20 +109,17 @@ class RenRen(object):
 
 
         # this is async version
-        pool = Pool(50)
+        pool = Pool(10)
         # at most spwan 50 greenlets, means get 1000 friends at one time
         for p in pool.imap_unordered(_get, xrange(1, friends_pages)):
             all_friends.extend(p)
-
-        # workers = [gevent.spawn(_get, i) for i in range(1, friends_pages)]
-        # gevent.joinall(workers)
-        # for w in workers:
-        #     all_friends.extend(w.value)
+            gevent.sleep(0)
 
 
         # print all_friends
         # print len(all_friends), friends_amount
-        return all_friends[:20]
+        return all_friends[:30]
+    
 
 
 
@@ -138,7 +136,7 @@ with open('account', 'r') as f:
 # r = RenRen(email, password)
 
 # r.get_friends(256089759)
-# r.get_friends(92094305)
+# print r.get_friends(92094305)
 
 # workers = [
 #     gevent.spawn(r.view_page, 252572048),
@@ -154,14 +152,19 @@ with open('account', 'r') as f:
 #     print w.value
 
 class FriendsStore(object):
+    __slots__ = ('uid', 'level', 'parent', 'friends')
+
     def __init__(self, uid, level, parent=None):
         self.uid = uid
         self.level = level
         self.parent = parent
-        self.friends = None
+        self.friends = set()
 
-    def is_friend(self, target_uid):
+    def has_friend(self, target_uid):
         return target_uid in self.friends
+    
+    def get_common_friends(self, friend_obj):
+        return self.friends & friend_obj.friends
 
 
 class RenRenRelationShip(object):
@@ -170,32 +173,104 @@ class RenRenRelationShip(object):
         self.slot = []
 
     def get_friend_obj_by_level(self, level):
-        res = filter(lambda s: s.level == level, self.slot)
-        print 'lv =', level, len(res)
-        return res
+        return filter(lambda s: s.level == level, self.slot)
 
 
     def collect_friends(self, uid, level=1):
+        @gtimeout(60)
         def _collect(fo):
             print 'collect ', fo.uid
-            fo.friends = self.renren.get_friends(fo.uid)
+            fo.friends = set(self.renren.get_friends(fo.uid))
             return fo
 
 
         fs = FriendsStore(uid, 0)
         self.slot.append(fs)
 
-        pool = Pool(200)
-
+        #pool = Pool(100)
+        #
+        #for l in range(level):
+        #    pool_jobs = pool.imap_unordered(_collect, self.get_friend_obj_by_level(l))
+        #    for fo in pool_jobs:
+        #        if fo:
+        #            self.slot.extend(
+        #                    [FriendsStore(u, l+1, fo.uid) for u in fo.friends]
+        #                )
+        #    gevent.sleep(0)
+        
         for l in range(level):
-            pool_jobs = pool.imap_unordered(_collect, self.get_friend_obj_by_level(l))
-            for fo in pool_jobs:
+            for fo in self.get_friend_obj_by_level(l):
+                _collect(fo)
                 self.slot.extend(
-                        [FriendsStore(u, l+1, fo.uid) for u in fo.friends]
-                    )
+                    [FriendsStore(u, l+1, fo.uid) for u in fo.friends]
+                )
+                
+
+        print 'collect done'
+        self.slot.pop(0)
 
 
 
 renren = RenRenRelationShip(email, password)
 renren.collect_friends(92094305, 2)
-print len(renren.slot)
+
+
+import networkx as nx
+import matplotlib.pyplot as plt
+
+class GraphAnalysis(object):
+    def __init__(self):
+        self.G = nx.Graph()
+
+    def import_data_from_friends_store(self, fs_list):
+        for fs in fs_list:
+            self.G.add_node(fs.uid, lv=fs.level)
+            if fs.friends:
+                edges = [(fs.uid, u) for u in fs.friends]
+                self.G.add_edges_from(edges)
+
+
+        for fs in fs_list:
+            for _fs in fs_list:
+                if fs == _fs:
+                    continue
+
+                if fs.has_friend(_fs.uid) and not self.G.has_edge(fs.uid, _fs.uid):
+                    self.G.add_edge(fs.uid, _fs.uid)
+                    
+
+
+        # remove 
+        nodes = self.G.nodes()
+        for n in nodes:
+            if self.G.degree(n) == 1:
+                self.G.remove_node(n)
+
+
+    def draw(self, it=50, f='x.png'):
+        pos = nx.spring_layout(self.G, iterations=it)
+
+        degree = nx.degree(self.G)
+        
+        def _size(d):
+            if d > 10:
+                d = 10
+            return d * 10
+                
+        node_size = [_size(degree[n]) for n in self.G]
+
+        nx.draw_networkx_nodes(self.G, pos, node_size=node_size)
+        nx.draw_networkx_edges(self.G, pos, alpha=0.3)
+        # nx.draw_networkx_labels(self.G, pos, alpha=0.6)
+
+        plt.axis('off')
+        plt.savefig(f, dpi=160)
+        plt.clf()
+
+
+
+g = GraphAnalysis()
+g.import_data_from_friends_store(renren.slot)
+# g.draw()
+
+
