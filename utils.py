@@ -36,7 +36,6 @@ def gtimeout(t=10, mute=False):
                 with gevent.Timeout(t, TooLong):
                     return func(*args, **kwargs)
             except TooLong:
-                print 'too long, args =', args
                 if mute:
                     return []
                 raise
@@ -44,3 +43,12 @@ def gtimeout(t=10, mute=False):
     return deco
 
 
+
+def get_accounts():
+    with open('account', 'r') as f:
+        data = f.readlines()
+        email = data[0].rstrip('\n')
+        password = data[1].rstrip('\n')
+        return email, password
+    
+    

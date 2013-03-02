@@ -1,0 +1,8 @@
+
+# you need Cython to compile gevent
+-e git+https://github.com/SiteSupport/gevent#egg=gevent
+
+lxml
+numpy
+networkx
+matplotlib

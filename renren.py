@@ -3,9 +3,11 @@
 import gevent.monkey
 gevent.monkey.patch_all()
 
+import gevent
 from gevent.pool import Pool
 
 
+import re
 import random
 import urllib
 import urllib2
@@ -50,6 +52,7 @@ class RenRen(object):
     def __init__(self, email, password):
         self.email = email
         self.password = password
+        self.login_times = 0
         self.login()
     
     
@@ -66,6 +69,8 @@ class RenRen(object):
     
 
     def login(self):
+        self.login_times += 1
+        
         url  = 'http://www.renren.com/ajaxLogin/login'
         data = urllib.urlencode({
                 'email': self.email,
@@ -76,15 +81,26 @@ class RenRen(object):
 
         self.cookie = cookielib.CookieJar()
         self.opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(self.cookie))
-        #self.opener.addheaders = self.headers
         
-        # 不知为何，这里不能带 headers，没有headers反而顺利请求
+        #self.opener.addheaders = self.headers
+        #不知为何，这里不能带 headers，没有headers反而顺利请求
         self.opener.addheaders = []
+        
         urllib2.install_opener(self.opener)
-
         request = urllib2.Request(url, data=data)
         urllib2.urlopen(request)
-        print self.email, 'login done'
+        
+        own_uid_pattern = re.compile('renren\.com/(\d+)/profile')
+        profile_page = self.opener.open('http://www.renren.com/profile.do')
+        own_uid = own_uid_pattern.findall(profile_page.geturl())
+        if not own_uid:
+            if self.login_times >= 3:
+                raise Exception("Login Failure!")
+            
+            gevent.sleep(2)
+            self.login()
+        else:
+            self.uid = own_uid[0]
 
 
     def view_page(self, uid):
@@ -92,7 +108,9 @@ class RenRen(object):
         self.opener.open(url)
 
 
-    def get_friends(self, uid):
+    def get_friends(self, uid=None):
+        uid = uid or self.uid
+        
         URL = 'http://friend.renren.com/GetFriendList.do?curpage={0}&id=' + str(uid)
         first_page = self.opener.open(URL.format(0))
 
@@ -100,7 +118,6 @@ class RenRen(object):
         tree = etree.parse(first_page, parse)
         friends_amount = int(tree.xpath('//div[@id="toc"]/p[1]/span/text()')[0])
 
-        print uid, friends_amount
 
         friends_pages, _rest = divmod(friends_amount, 20)
         if _rest > 0:
@@ -118,7 +135,6 @@ class RenRen(object):
         @retry()
         @gtimeout()
         def _get(p):
-            print '_get', uid, p
             html = self.opener.open(URL.format(p))
             tree = etree.parse(html, parse)
             res = [f.split('=')[1] for f in tree.xpath(friends_xpath)]
@@ -140,127 +156,60 @@ class RenRen(object):
         #    gevent.sleep(0)
 
 
-        return all_friends[:100]
+        return all_friends
     
 
 
 
 class RenRenRelationShip(object):
-    def __init__(self, accounts):
-        self.renrens = [RenRen(email, password) for email, password in accounts]
-        self.slot = []
+    def __init__(self, email, password):
+        self.renren = RenRen(email, password)
         
     
-    @property
-    def renren(self):
-        return random.choice(self.renrens)
 
-
-    def get_friend_obj_by_level(self, level):
-        return filter(lambda s: s.level == level, self.slot)
-
-
-    def collect_friends(self, uid, level=1):
-        @gtimeout(90, mute=True)
+    def collect_friends(self, uid=None, level=1):
+        slot = []
+        slot_dict = {}
+        
+        uid = uid or self.renren.uid
+        uid = str(uid)
+        
+        def get_fs_by_level(lv):
+            return filter(lambda s: s.level == lv, slot)
+        
+        @gtimeout(360, mute=True)
         def _collect(fo):
-            print 'collect ', fo.uid
-            fo.friends = set(self.renren.get_friends(fo.uid))
+            friends = set(self.renren.get_friends(fo.uid))
+            if uid in friends:
+                friends.remove(uid)
+            fo.friends = friends
             return fo
-
+        
+        
 
         fs = FriendsStore(uid, 0)
-        self.slot.append(fs)
-
-        pool = Pool(20)
-        for l in range(level):
-            pool_jobs = pool.imap_unordered(_collect, self.get_friend_obj_by_level(l))
-            for fo in pool_jobs:
-                if fo:
-                    self.slot.extend(
-                            [FriendsStore(u, l+1, fo.uid) for u in fo.friends]
-                        )
+        slot.append(fs)
         
-        #for l in range(level):
-        #    for fo in self.get_friend_obj_by_level(l):
-        #        _collect(fo)
-        #        if fo:
-        #            self.slot.extend(
-        #                [FriendsStore(u, l+1, fo.uid) for u in fo.friends]
-        #            )
+        def find_fs(uid, lv, parent):
+            if uid not in slot_dict:
+                slot_dict[uid] = FriendsStore(uid, lv, parent)
+            return slot_dict[uid]
+
+        pool = Pool(30)
+        for l in range(level):
+            pool_jobs = pool.imap(_collect, get_fs_by_level(l))
+            for fo in pool_jobs:
+                if not fo:
+                    continue
+                
+                slot.extend(
+                    [find_fs(u, l+1, fo.uid) for u in fo.friends]
+                )
+                
                 
         print 'collect done'
-        self.slot.pop(0)
+        slot.pop(0)
+        return slot
 
-
-
-
-
-with open('account', 'r') as f:
-    data = f.readlines()
-    data = [d.rstrip('\n') for d in data]
-    accounts = zip(data[::2], data[1::2])
-    
-
-
-r = RenRenRelationShip(accounts)
-r.collect_friends(92094305, 2)
-
-
-import networkx as nx
-import matplotlib.pyplot as plt
-
-class GraphAnalysis(object):
-    def __init__(self):
-        self.G = nx.Graph()
-
-    def import_data_from_friends_store(self, fs_list):
-        for fs in fs_list:
-            self.G.add_node(fs.uid, lv=fs.level)
-            if fs.friends:
-                edges = [(fs.uid, u) for u in fs.friends]
-                self.G.add_edges_from(edges)
-
-
-        for fs in fs_list:
-            for _fs in fs_list:
-                if fs == _fs:
-                    continue
-
-                if fs.has_friend(_fs.uid) and not self.G.has_edge(fs.uid, _fs.uid):
-                    self.G.add_edge(fs.uid, _fs.uid)
-                    
-
-
-        # remove 
-        nodes = self.G.nodes()
-        for n in nodes:
-            if self.G.degree(n) == 1:
-                self.G.remove_node(n)
-
-
-    def draw(self, it=50, f='x.png'):
-        pos = nx.spring_layout(self.G, iterations=it)
-        degree = nx.degree(self.G)
-        
-        def _size(d):
-            if d > 50:
-                d = 50
-            return d
-                
-        node_size = [_size(degree[n]) for n in self.G]
-
-        nx.draw_networkx_nodes(self.G, pos, node_size=node_size)
-        nx.draw_networkx_edges(self.G, pos, alpha=0.3)
-        # nx.draw_networkx_labels(self.G, pos, alpha=0.6)
-
-        plt.axis('off')
-        plt.savefig(f, dpi=200)
-        plt.clf()
-
-
-
-g = GraphAnalysis()
-g.import_data_from_friends_store(r.slot)
-# g.draw()
 
 
