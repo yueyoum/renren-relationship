@@ -2,10 +2,10 @@
 
 import random
 import cPickle as pickle
+import subprocess
 
 
 import networkx as nx
-import matplotlib.pyplot as plt
 
 from renren import FriendsStore, RenRenRelationShip
 
@@ -54,6 +54,8 @@ class GraphAnalysis(object):
 
         self.clear_nodes()
         self.degree = nx.degree(self.G)
+        self.max_degree_value = max(self.degree.values())
+        self.max_degree_value_floated = float(self.max_degree_value)
         
         
         
@@ -74,37 +76,42 @@ class GraphAnalysis(object):
                 
                 
     def one_node_size(self, n):
-        d = self.degree[n] / 2
+        d = self.degree[n]
+        d = d / self.max_degree_value_floated * self.max_node_size
         if d < self.min_node_size:
             d = self.min_node_size
-        elif d > self.max_node_size:
-            d = self.max_node_size
         return d
+        
                 
     
     def get_node_size(self, nodes):
         return [self.one_node_size(n) for n in nodes]
     
     
-    def get_node_color(self, nodes):
-        middle_size = (self.min_node_size + self.max_node_size) / 2
-        def _color(n):
-            d = self.one_node_size(n)
-            if d > middle_size:
-                _range = [0.5, 0.8]
-            else:
-                _range = [0.8, 1.0]
-                
-            _make = lambda: random.uniform(*_range)
+    def one_node_color(self, n):
+        d = self.degree[n]
+        if d > self.max_degree_value / 2:
+            _range = [0.5, 0.8]
+        else:
+            _range = [0.8, 1.0]
             
-            return (_make(), _make(), _make())
-        return [_color(n) for n in nodes]
-            
+        _make = lambda: random.uniform(*_range)
+        _love = _make
+        _ohyes = _make
         
+        return (_make(), _love(), _ohyes())
+    
+    
+    
+    def get_node_color(self, nodes):
+        return [self.one_node_color(n) for n in nodes]
+            
         
 
 
     def save(self, f='result.png', it=55):
+        import matplotlib.pyplot as plt
+        
         pos = nx.spring_layout(self.G, iterations=it)
         
         nx.draw_networkx_edges(self.G, pos, alpha=0.1)
@@ -123,9 +130,75 @@ class GraphAnalysis(object):
 
 
 
+
+class DrawGraphviz(GraphAnalysis):
+    COLORS = [
+        '#F20010', '#FC4292', '#B94C4A', '#D19D39', '#A79D0F', '#A65FCC',
+        '#9470E7', '#19CD1D', '#1DDF9A', '#52A79F', '#24B5D9', '#2080DC',
+    ]
+    
+    def __init__(self):
+        super(DrawGraphviz, self).__init__()
+        self.min_node_size = 0.05
+        self.max_node_size = 0.2
+        
+        
+        
+    def one_node_color(self, n):
+        d = self.degree[n]
+        for index, color in enumerate(self.COLORS):
+            if d * (index+1) >= self.max_degree_value:
+                return color
+        return color
+        
+        
+        
+    def save(self, f='result.png'):
+        node_attr_template = {
+            'sharp': "point",
+            'color': "",
+            'style': "filled",
+            'width': 0.1,
+            'height': 0.1,
+            'fixedsize': "true",
+            'label': "",
+        }
+        
+        
+        
+        for n in self.G.nodes():
+            attr = node_attr_template.copy()
+            attr['width'] = self.one_node_size(n)
+            attr['height'] = attr['width']
+            attr['color'] = self.one_node_color(n)
+            
+            self.G.node[n] = attr
+            
+            edges = self.G.edge[n]
+            for ed in edges:
+                self.G.edge[n][ed] = {'color': '{0}22'.format(attr['color'])}
+                
+        
+        DOT_FILE = '_renren.dot'
+        nx.write_dot(self.G, DOT_FILE)
+        pipe = subprocess.PIPE
+        
+        graphviz_command = ['dot']
+        graphviz_command.append(DOT_FILE)
+        graphviz_command.extend(['-Tpng', '-Kneato', '-o'])
+        graphviz_command.append(f)
+        
+        p = subprocess.Popen(graphviz_command, stdin=pipe, stdout=pipe, stderr=pipe)
+        ret_code = p.wait()
+        if ret_code !=0 :
+            _, ret_error_msg = p.communicate()
+            raise Exception(ret_error_msg)
+
+
+
 if __name__ == '__main__':
     data = _load()
-    g = GraphAnalysis()
+    g = DrawGraphviz()
     g.import_data(data)
     g.save()
 

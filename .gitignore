@@ -3,6 +3,7 @@
 *.swp
 
 *.png
+*.dot
 
 env
 

@@ -3,6 +3,23 @@
 恩，很大的题目，但做的很差。所以欢迎大家来fix
 
 
+## 更新
+
+### 2013-03-03
+
+使用 [graphviz](http://www.graphviz.org/) 绘图,
+但还保留了 networkx，使用它来删除节点和计算degree
+
+现在运行 `python local_graph.py` 就会生成一张漂亮的关系图（现在还没有在图上标记用户名）
+所以请确保计算机一正确安装 graphviz
+
+debian系用户只要简单的运行下面的命令即可
+
+    sudo apt-get install graphviz
+    
+
+
+
 ## 如何运行
 
 1.  git clone 代码
@@ -10,8 +27,15 @@
 3.  cp account.example account 然后按照其中格式填写人人网帐号
 3.  python local_graph.py
     
+    
+    
 运行程序，一段时间后（不同的网络环境会导致抓取时间差异很大，在我这里一共用了40分钟）
 程序正常退出。就会在目录中生成一张 result.png 图片。
+
+![renren_graphviz](http://i1297.photobucket.com/albums/ag23/yueyoum/result_zps1ff92b48.png)
+
+
+**下面是用 networkx 和 matplotlib生成的图片，新代码默认不再使用**
 
 ![renren](http://i1297.photobucket.com/albums/ag23/yueyoum/renrenhaoyou_zps3d5d3845.png)
 
@@ -21,7 +45,6 @@
 *   高中同学圈子
 *   大学同学圈子
 *   码农圈子
-*   还有一小嘬摄影圈
 
 还有一些孤立（不属于这三个大圈子的同学）的好友，没有显示。
 
@@ -47,7 +70,7 @@
 1.  某晚，正在在爬好友测试的时候，发现总是爬不到一些人的好友。
     然后才发现了一个悲剧的事实，（不过也是合理的）：
     
-    **好友不是你想爬，想爬就能爬限**
+    **好友不是你想爬，想爬就能爬**
     
     只有开放了对应权限的才能察看其好友。
     
